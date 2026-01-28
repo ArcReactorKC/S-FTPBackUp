@@ -144,17 +144,30 @@ def create_backup(device: dict):
         shutil.make_archive(base_name, "zip", temp_path)
 
 
+def _job_id_for_device(device: dict) -> str:
+    # Keep this stable; it’s how we look up next_run_time
+    return f"backup-{device['label']}-{device['ip']}"
+
+
+def get_next_run_time_for_device(device: dict):
+    job = scheduler.get_job(_job_id_for_device(device))
+    if not job or not job.next_run_time:
+        return None
+    # ISO format is easy for the browser to parse & display
+    return job.next_run_time.isoformat()
+
+
 def schedule_device(device: dict):
     interval = device.get("interval")
     seconds = INTERVAL_SECONDS.get(interval)
     if not seconds:
         return
-    job_id = f"backup-{device['label']}-{device['ip']}"
+
     scheduler.add_job(
         create_backup,
         trigger=IntervalTrigger(seconds=seconds),
         args=[device],
-        id=job_id,
+        id=_job_id_for_device(device),
         replace_existing=True,
     )
 
@@ -173,7 +186,10 @@ def index():
 @app.route("/devices", methods=["GET", "POST"])
 def devices():
     if request.method == "GET":
-        return jsonify(load_devices())
+        devices_list = load_devices()
+        for d in devices_list:
+            d["next_backup"] = get_next_run_time_for_device(d)
+        return jsonify(devices_list)
 
     payload = request.get_json(silent=True) or {}
     devices_payload = payload.get("devices", [])
