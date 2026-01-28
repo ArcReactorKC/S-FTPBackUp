@@ -5,45 +5,107 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PLCNext Backup</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 2rem; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+    }
     .device-row {
       display: grid;
-      grid-template-columns: 1.2fr 1.2fr 1.2fr 1.2fr 1fr auto;
+      grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1.2fr auto;
       gap: 1rem;
       margin-bottom: 1rem;
       align-items: end;
     }
-    label { display: block; font-weight: bold; margin-bottom: 0.3rem; }
-    input, select { width: 100%; padding: 0.4rem; box-sizing: border-box; }
-    button { padding: 0.6rem 1rem; cursor: pointer; }
-    #device-list { margin-top: 2rem; }
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 0.3rem;
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 0.4rem;
+      box-sizing: border-box;
+    }
+    button {
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+    }
+    #device-list {
+      margin-top: 2rem;
+    }
     .device-card {
       padding: 0.8rem;
       border: 1px solid #ccc;
       margin-bottom: 0.6rem;
       border-radius: 4px;
       display: flex;
+      align-items: center;
       justify-content: space-between;
       gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .browse-panel {
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 0.4rem;
+    }
+    .browse-toolbar {
+      display: flex;
+      gap: 0.4rem;
       align-items: center;
       flex-wrap: wrap;
     }
-    .device-actions button { margin-right: 0.5rem; }
-    .muted { color: #666; }
+    .browse-path {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.85rem;
+      padding: 0.35rem 0.5rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fafafa;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 420px;
+    }
+    .browse-list {
+      border: 1px solid #ccc;
+      padding: 0.4rem;
+      max-height: 180px;
+      overflow-y: auto;
+      border-radius: 4px;
+    }
+    .browse-item {
+      padding: 0.2rem 0.3rem;
+      border-radius: 3px;
+      user-select: none;
+    }
+    .browse-item:hover {
+      background: #f2f2f2;
+    }
+    .browse-dir {
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .browse-file {
+      opacity: 0.65;
+      cursor: default;
+    }
+    .hint {
+      font-size: 0.85rem;
+      color: #555;
+      margin-top: 0.25rem;
+    }
   </style>
 </head>
 <body>
   <h1>PLCNext Backup Scheduler</h1>
-  <p class="muted">
-    Add PLC label, IP address, SFTP credentials, and a backup interval. Click “Add device” to add more.
-  </p>
+  <p>Enter a PLC device label, IP address, SFTP credentials, and backup interval. Use “Add device” to include multiple devices.</p>
 
   <form id="device-form">
     <div id="device-container"></div>
-    <div style="margin-top: 1rem;">
-      <button type="button" id="add-device">Add device</button>
-      <button type="submit">Save devices</button>
-    </div>
+    <button type="button" id="add-device">Add device</button>
+    <button type="submit">Save devices</button>
   </form>
 
   <div id="device-list">
@@ -51,53 +113,256 @@
     <div id="device-cards"></div>
   </div>
 
+  <script id="interval-data" type="application/json">{{ intervals|tojson }}</script>
   <script>
-    const intervals = {{ intervals|tojson }};
     const container = document.getElementById('device-container');
+    const fallbackIntervals = ['1 hour', '1 day', '1 week', '1 month'];
+    let intervals = fallbackIntervals;
+    try {
+      const intervalScript = document.getElementById('interval-data');
+      if (intervalScript && intervalScript.textContent) {
+        intervals = JSON.parse(intervalScript.textContent);
+      }
+    } catch (error) {
+      console.error('Failed to parse intervals; using defaults.', error);
+      intervals = fallbackIntervals;
+    }
+
     const addButton = document.getElementById('add-device');
     const deviceCards = document.getElementById('device-cards');
+
+    function createInputField(labelText, type, name, value, required=true) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = labelText;
+      const input = document.createElement('input');
+      input.type = type;
+      input.name = name;
+      if (required) input.required = true;
+      input.value = value || '';
+      wrapper.append(label, input);
+      return wrapper;
+    }
+
+    function createSelectField(labelText, name, value) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = labelText;
+      const select = document.createElement('select');
+      select.name = name;
+      select.required = true;
+      intervals.forEach(interval => {
+        const option = document.createElement('option');
+        option.value = interval;
+        option.textContent = interval;
+        if (interval === value) option.selected = true;
+        select.appendChild(option);
+      });
+      wrapper.append(label, select);
+      return wrapper;
+    }
+
+    function createPathsField(value) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = 'Backup paths (one per line)';
+      const textarea = document.createElement('textarea');
+      textarea.name = 'paths';
+      textarea.rows = 6;
+      textarea.placeholder = '/opt/plcnext/projects/MyProject\n/opt/plcnext/projects/AnotherProject';
+      textarea.value = Array.isArray(value) ? value.join('\n') : (value || '');
+      wrapper.append(label, textarea);
+
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = 'Tip: double-click a folder in the browser to add it here.';
+      wrapper.appendChild(hint);
+
+      return wrapper;
+    }
+
+    function addPathToTextarea(row, path) {
+      const textarea = row.querySelector('textarea[name="paths"]');
+      const normalized = String(path || '').trim();
+      if (!normalized) return;
+
+      const existing = textarea.value
+        .split('\n')
+        .map(p => p.trim())
+        .filter(Boolean);
+
+      if (!existing.includes(normalized)) {
+        existing.push(normalized);
+        textarea.value = existing.join('\n');
+      }
+    }
 
     function createRow(device = {}) {
       const row = document.createElement('div');
       row.className = 'device-row';
 
-      row.innerHTML = `
-        <div>
-          <label>Device label *</label>
-          <input type="text" name="label" required value="${device.label || ''}" />
-        </div>
-        <div>
-          <label>PLC IP address *</label>
-          <input type="text" name="ip" required value="${device.ip || ''}" />
-        </div>
-        <div>
-          <label>SFTP username *</label>
-          <input type="text" name="username" required value="${device.username || ''}" />
-        </div>
-        <div>
-          <label>SFTP password *</label>
-          <input type="password" name="password" required value="${device.password || ''}" />
-        </div>
-        <div>
-          <label>Backup interval *</label>
-          <select name="interval" required>
-            ${intervals.map(i => `<option value="${i}" ${device.interval === i ? 'selected' : ''}>${i}</option>`).join('')}
-          </select>
-        </div>
-        <div>
-          <button type="button" class="remove">Remove</button>
-        </div>
-      `;
+      row.appendChild(createInputField('Device label *', 'text', 'label', device.label));
+      row.appendChild(createInputField('PLC IP address *', 'text', 'ip', device.ip));
+      row.appendChild(createInputField('SFTP username *', 'text', 'username', device.username));
+      row.appendChild(createInputField('SFTP password *', 'password', 'password', device.password));
+      row.appendChild(createSelectField('Backup interval *', 'interval', device.interval));
 
-      row.querySelector('.remove').addEventListener('click', () => row.remove());
+      // Paths textarea
+      row.appendChild(createPathsField(device.paths));
+
+      // Browse panel
+      const browsePanel = document.createElement('div');
+      browsePanel.className = 'browse-panel';
+
+      const toolbar = document.createElement('div');
+      toolbar.className = 'browse-toolbar';
+
+      const browseButton = document.createElement('button');
+      browseButton.type = 'button';
+      browseButton.textContent = 'Browse';
+
+      const upButton = document.createElement('button');
+      upButton.type = 'button';
+      upButton.textContent = 'Up';
+      upButton.disabled = true;
+
+      const selectCurrentButton = document.createElement('button');
+      selectCurrentButton.type = 'button';
+      selectCurrentButton.textContent = 'Select folder';
+      selectCurrentButton.disabled = true;
+
+      const pathDisplay = document.createElement('div');
+      pathDisplay.className = 'browse-path';
+      pathDisplay.textContent = '/opt/plcnext/projects';
+
+      toolbar.append(browseButton, upButton, selectCurrentButton);
+      browsePanel.appendChild(toolbar);
+      browsePanel.appendChild(pathDisplay);
+
+      const browseList = document.createElement('div');
+      browseList.className = 'browse-list';
+      browsePanel.appendChild(browseList);
+
+      row.appendChild(browsePanel);
+
+      // Row actions
+      const actions = document.createElement('div');
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'remove';
+      removeButton.textContent = 'Remove';
+      removeButton.addEventListener('click', () => row.remove());
+      actions.appendChild(removeButton);
+      row.appendChild(actions);
+
+      // --- Remote browser logic ---
+      let currentBrowsePath = '/opt/plcnext/projects';
+
+      async function loadDirectory(path) {
+        const ip = row.querySelector('input[name="ip"]').value.trim();
+        const username = row.querySelector('input[name="username"]').value.trim();
+        const password = row.querySelector('input[name="password"]').value;
+
+        if (!ip || !username || !password) {
+          browseList.textContent = 'Enter IP/username/password first.';
+          return;
+        }
+
+        browseList.textContent = 'Loading...';
+        upButton.disabled = true;
+        selectCurrentButton.disabled = true;
+
+        try {
+          const response = await fetch('/browse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ip,
+              username,
+              password,
+              path: path,
+            }),
+          });
+
+          const payload = await response.json();
+          currentBrowsePath = (payload && payload.path) ? payload.path : path;
+          pathDisplay.textContent = currentBrowsePath;
+
+          browseList.innerHTML = '';
+
+          const isRoot = currentBrowsePath === '/' || currentBrowsePath === '';
+          upButton.disabled = isRoot;
+          selectCurrentButton.disabled = false;
+
+          if (!payload.entries || !payload.entries.length) {
+            browseList.textContent = 'No readable entries found in this folder.';
+            return;
+          }
+
+          // Add a ".." entry for navigation
+          if (!isRoot) {
+            const upItem = document.createElement('div');
+            upItem.className = 'browse-item browse-dir';
+            upItem.textContent = '..';
+            upItem.title = 'Up one level';
+            upItem.addEventListener('click', () => {
+              const parts = currentBrowsePath.split('/').filter(Boolean);
+              parts.pop();
+              const parent = '/' + parts.join('/');
+              loadDirectory(parent === '' ? '/' : parent);
+            });
+            browseList.appendChild(upItem);
+          }
+
+          payload.entries.forEach(entry => {
+            const item = document.createElement('div');
+            item.className = 'browse-item ' + (entry.is_dir ? 'browse-dir' : 'browse-file');
+            item.textContent = entry.name;
+
+            const fullPath = (currentBrowsePath.replace(/\/$/, '') || '/') + '/' + entry.name;
+
+            if (entry.is_dir) {
+              item.title = 'Click to open • Double-click to select';
+              item.addEventListener('click', () => loadDirectory(fullPath));
+              item.addEventListener('dblclick', () => addPathToTextarea(row, fullPath));
+            } else {
+              item.title = 'File (read-only in browser)';
+              // Optional: allow double-click to add a specific file path
+              item.addEventListener('dblclick', () => addPathToTextarea(row, fullPath));
+            }
+
+            browseList.appendChild(item);
+          });
+
+        } catch (err) {
+          console.error(err);
+          browseList.textContent = 'Browse failed.';
+        }
+      }
+
+      browseButton.addEventListener('click', () => {
+        currentBrowsePath = '/opt/plcnext/projects';
+        loadDirectory(currentBrowsePath);
+      });
+
+      upButton.addEventListener('click', () => {
+        const parts = currentBrowsePath.split('/').filter(Boolean);
+        parts.pop();
+        const parent = '/' + parts.join('/');
+        loadDirectory(parent === '' ? '/' : parent);
+      });
+
+      selectCurrentButton.addEventListener('click', () => {
+        addPathToTextarea(row, currentBrowsePath);
+      });
+
       return row;
     }
 
     function renderDevices(devices) {
       deviceCards.innerHTML = '';
-
-      if (!devices || !devices.length) {
-        deviceCards.innerHTML = '<p class="muted">No devices configured.</p>';
+      if (!devices.length) {
+        deviceCards.innerHTML = '<p>No devices configured.</p>';
         return;
       }
 
@@ -106,29 +371,29 @@
         card.className = 'device-card';
 
         const info = document.createElement('div');
-        info.innerHTML = `<strong>${device.label}</strong> (${device.ip}) — ${device.username} — ${device.interval}`;
+        const pathsSummary = (device.paths && device.paths.length)
+          ? ` | Paths: ${device.paths.length}`
+          : ' | Paths: default';
+        info.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval}${pathsSummary}`;
 
         const actions = document.createElement('div');
-        actions.className = 'device-actions';
 
-        const backupBtn = document.createElement('button');
-        backupBtn.type = 'button';
-        backupBtn.textContent = 'Backup now';
-        backupBtn.addEventListener('click', async () => {
-          const res = await fetch(`/devices/${index}/backup`, { method: 'POST' });
-          if (!res.ok) alert(`Backup failed: ${res.status}`);
+        const backupButton = document.createElement('button');
+        backupButton.type = 'button';
+        backupButton.textContent = 'Backup now';
+        backupButton.addEventListener('click', async () => {
+          await fetch(`/devices/${index}/backup`, { method: 'POST' });
         });
 
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.textContent = 'Remove';
-        removeBtn.addEventListener('click', async () => {
-          const res = await fetch(`/devices/${index}`, { method: 'DELETE' });
-          if (!res.ok) alert(`Remove failed: ${res.status}`);
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.textContent = 'Remove';
+        removeButton.addEventListener('click', async () => {
+          await fetch(`/devices/${index}`, { method: 'DELETE' });
           await fetchDevices();
         });
 
-        actions.append(backupBtn, removeBtn);
+        actions.append(backupButton, removeButton);
         card.append(info, actions);
         deviceCards.appendChild(card);
       });
@@ -137,22 +402,24 @@
     async function fetchDevices() {
       try {
         const response = await fetch('/devices');
-        if (!response.ok) throw new Error(`Device load failed: ${response.status}`);
-
+        if (!response.ok) {
+          throw new Error(`Device load failed: ${response.status}`);
+        }
         const devices = await response.json();
+
         renderDevices(devices);
 
-        // Populate editable rows from saved devices
         container.innerHTML = '';
         if (devices.length) {
-          devices.forEach(d => container.appendChild(createRow(d)));
+          devices.forEach(device => container.appendChild(createRow(device)));
         } else {
           container.appendChild(createRow());
         }
-      } catch (err) {
-        console.error(err);
-        // Always show at least one editable row
-        if (!container.childElementCount) container.appendChild(createRow());
+      } catch (error) {
+        console.error(error);
+        if (!container.childElementCount) {
+          container.appendChild(createRow());
+        }
       }
     }
 
@@ -162,31 +429,31 @@
 
     document.getElementById('device-form').addEventListener('submit', async (event) => {
       event.preventDefault();
-
       const rows = container.querySelectorAll('.device-row');
       const devices = Array.from(rows).map(row => ({
-        label: row.querySelector('input[name="label"]').value.trim(),
-        ip: row.querySelector('input[name="ip"]').value.trim(),
-        username: row.querySelector('input[name="username"]').value.trim(),
+        label: row.querySelector('input[name="label"]').value,
+        ip: row.querySelector('input[name="ip"]').value,
+        username: row.querySelector('input[name="username"]').value,
         password: row.querySelector('input[name="password"]').value,
         interval: row.querySelector('select[name="interval"]').value,
-      })).filter(d => d.label && d.ip && d.username && d.password && d.interval);
+        paths: row.querySelector('textarea[name="paths"]').value
+          .split('\n')
+          .map(path => path.trim())
+          .filter(Boolean),
+      }));
 
-      const res = await fetch('/devices', {
+      await fetch('/devices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ devices }),
       });
 
-      if (!res.ok) {
-        alert(`Save failed: ${res.status}`);
-        return;
-      }
-
       await fetchDevices();
     });
 
-    // Initial load
+    if (!container.childElementCount) {
+      container.appendChild(createRow());
+    }
     fetchDevices();
   </script>
 </body>
