@@ -156,6 +156,29 @@ def devices():
     return jsonify({"status": "saved", "count": len(cleaned_devices)})
 
 
+codex/create-docker-with-plc-backup-interface-8tvd1f
+@app.route("/devices/<int:device_index>", methods=["DELETE"])
+def delete_device(device_index):
+    devices = load_devices()
+    if device_index < 0 or device_index >= len(devices):
+        return jsonify({"error": "Device not found"}), 404
+    devices.pop(device_index)
+    save_devices(devices)
+    refresh_schedule()
+    return jsonify({"status": "deleted"})
+
+
+@app.route("/devices/<int:device_index>/backup", methods=["POST"])
+def backup_device(device_index):
+    devices = load_devices()
+    if device_index < 0 or device_index >= len(devices):
+        return jsonify({"error": "Device not found"}), 404
+    create_backup(devices[device_index])
+    return jsonify({"status": "backup_started"})
+
+
+
+ main
 if __name__ == "__main__":
     refresh_schedule()
     scheduler.start()

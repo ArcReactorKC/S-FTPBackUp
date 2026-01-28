@@ -101,10 +101,30 @@
         deviceCards.innerHTML = '<p>No devices configured.</p>';
         return;
       }
+ codex/create-docker-with-plc-backup-interface-8tvd1f
+      devices.forEach((device, index) => {
+        const card = document.createElement('div');
+        card.className = 'device-card';
+        card.innerHTML = `
+          <div><strong>${device.label}</strong> (${device.ip}) — ${device.username} — ${device.interval}</div>
+          <div>
+            <button type="button" data-action="backup" data-index="${index}">Backup now</button>
+            <button type="button" data-action="remove" data-index="${index}">Remove</button>
+          </div>
+        `;
+        card.querySelector('[data-action="backup"]').addEventListener('click', async () => {
+          await fetch(`/devices/${index}/backup`, { method: 'POST' });
+        });
+        card.querySelector('[data-action="remove"]').addEventListener('click', async () => {
+          await fetch(`/devices/${index}`, { method: 'DELETE' });
+          await fetchDevices();
+        });
+
       devices.forEach(device => {
         const card = document.createElement('div');
         card.className = 'device-card';
         card.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval}`;
+ main
         deviceCards.appendChild(card);
       });
     }
