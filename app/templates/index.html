@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PLCNext Backup</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+    }
+    .device-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr auto;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      align-items: end;
+    }
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 0.3rem;
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 0.4rem;
+    }
+    button {
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+    }
+    #device-list {
+      margin-top: 2rem;
+    }
+    .device-card {
+      padding: 0.8rem;
+      border: 1px solid #ccc;
+      margin-bottom: 0.6rem;
+      border-radius: 4px;
+    }
+    .browse-list {
+      border: 1px solid #ccc;
+      padding: 0.4rem;
+      max-height: 140px;
+      overflow-y: auto;
+      margin-top: 0.4rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>PLCNext Backup Scheduler</h1>
+  <p>Enter a PLC device label, IP address, SFTP credentials, and backup interval. Use “Add device” to include multiple devices.</p>
+
+  <form id="device-form">
+    <div id="device-container"></div>
+    <button type="button" id="add-device">Add device</button>
+    <button type="submit">Save devices</button>
+  </form>
+
+  <div id="device-list">
+    <h2>Configured Devices</h2>
+    <div id="device-cards"></div>
+  </div>
+
+  <script id="interval-data" type="application/json">{{ intervals|tojson }}</script>
+  <script>
+    const container = document.getElementById('device-container');
+    const fallbackIntervals = ['1 hour', '1 day', '1 week', '1 month'];
+    let intervals = fallbackIntervals;
+    try {
+      const intervalScript = document.getElementById('interval-data');
+      if (intervalScript && intervalScript.textContent) {
+        intervals = JSON.parse(intervalScript.textContent);
+      }
+    } catch (error) {
+      console.error('Failed to parse intervals; using defaults.', error);
+      intervals = fallbackIntervals;
+    }
+    const addButton = document.getElementById('add-device');
+    const deviceCards = document.getElementById('device-cards');
+
+    function createInputField(labelText, type, name, value) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = labelText;
+      const input = document.createElement('input');
+      input.type = type;
+      input.name = name;
+      input.required = true;
+      input.value = value || '';
+      wrapper.append(label, input);
+      return wrapper;
+    }
+
+    function createSelectField(labelText, name, value) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = labelText;
+      const select = document.createElement('select');
+      select.name = name;
+      select.required = true;
+      intervals.forEach(interval => {
+        const option = document.createElement('option');
+        option.value = interval;
+        option.textContent = interval;
+        if (interval === value) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      });
+      wrapper.append(label, select);
+      return wrapper;
+    }
+
+    function createPathsField(value) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = 'Backup paths (one per line)';
+      const textarea = document.createElement('textarea');
+      textarea.name = 'paths';
+      textarea.rows = 3;
+      textarea.placeholder = '/opt/plcnext/projects/MyProject';
+      textarea.value = Array.isArray(value) ? value.join('\n') : (value || '');
+      wrapper.append(label, textarea);
+      return wrapper;
+    }
+
+    function createBrowseList() {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'browse-list';
+      return wrapper;
+    }
+
+    function createRow(device = {}) {
+      const row = document.createElement('div');
+      row.className = 'device-row';
+      row.appendChild(createInputField('Device label *', 'text', 'label', device.label));
+      row.appendChild(createInputField('PLC IP address *', 'text', 'ip', device.ip));
+      row.appendChild(createInputField('SFTP username *', 'text', 'username', device.username));
+      row.appendChild(createInputField('SFTP password *', 'password', 'password', device.password));
+      row.appendChild(createSelectField('Backup interval *', 'interval', device.interval));
+      row.appendChild(createPathsField(device.paths));
+      const browseWrapper = document.createElement('div');
+      const browseButton = document.createElement('button');
+      browseButton.type = 'button';
+      browseButton.textContent = 'Browse';
+      const browseList = createBrowseList();
+      browseWrapper.append(browseButton, browseList);
+      row.appendChild(browseWrapper);
+      const actions = document.createElement('div');
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'remove';
+      removeButton.textContent = 'Remove';
+      removeButton.addEventListener('click', () => row.remove());
+      actions.appendChild(removeButton);
+      row.appendChild(actions);
+
+      browseButton.addEventListener('click', async () => {
+        const ip = row.querySelector('input[name="ip"]').value;
+        const username = row.querySelector('input[name="username"]').value;
+        const password = row.querySelector('input[name="password"]').value;
+        browseList.textContent = 'Loading...';
+        try {
+          const response = await fetch('/browse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ip,
+              username,
+              password,
+              path: '/opt/plcnext/projects',
+            }),
+          });
+          const payload = await response.json();
+          browseList.innerHTML = '';
+          if (!payload.entries || !payload.entries.length) {
+            browseList.textContent = 'No readable entries found.';
+            return;
+          }
+          payload.entries.forEach(entry => {
+            const item = document.createElement('div');
+            item.textContent = entry.name;
+            if (!entry.is_dir) {
+              item.style.opacity = '0.5';
+              item.title = 'File';
+            } else {
+              item.style.cursor = 'pointer';
+              item.addEventListener('click', () => {
+                const textarea = row.querySelector('textarea[name="paths"]');
+                const current = textarea.value ? `${textarea.value}\n` : '';
+                textarea.value = `${current}${payload.path.replace(/\/$/, '')}/${entry.name}`;
+              });
+            }
+            browseList.appendChild(item);
+          });
+        } catch (error) {
+          console.error(error);
+          browseList.textContent = 'Browse failed.';
+        }
+      });
+      return row;
+    }
+
+    function renderDevices(devices) {
+      deviceCards.innerHTML = '';
+      if (!devices.length) {
+        deviceCards.innerHTML = '<p>No devices configured.</p>';
+        return;
+      }
+      devices.forEach((device, index) => {
+        const card = document.createElement('div');
+        card.className = 'device-card';
+        const info = document.createElement('div');
+        info.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval}`;
+        const actions = document.createElement('div');
+        const backupButton = document.createElement('button');
+        backupButton.type = 'button';
+        backupButton.textContent = 'Backup now';
+        backupButton.addEventListener('click', async () => {
+          await fetch(`/devices/${index}/backup`, { method: 'POST' });
+        });
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.textContent = 'Remove';
+        removeButton.addEventListener('click', async () => {
+          await fetch(`/devices/${index}`, { method: 'DELETE' });
+          await fetchDevices();
+        });
+        actions.append(backupButton, removeButton);
+        card.append(info, actions);
+        deviceCards.appendChild(card);
+      });
+    }
+
+    async function fetchDevices() {
+      try {
+        const response = await fetch('/devices');
+        if (!response.ok) {
+          throw new Error(`Device load failed: ${response.status}`);
+        }
+        const devices = await response.json();
+        renderDevices(devices);
+        container.innerHTML = '';
+        if (devices.length) {
+          devices.forEach(device => container.appendChild(createRow(device)));
+        } else if (!container.childElementCount) {
+          container.appendChild(createRow());
+        }
+      } catch (error) {
+        console.error(error);
+        if (!container.childElementCount) {
+          container.appendChild(createRow());
+        }
+      }
+    }
+
+    addButton.addEventListener('click', () => {
+      container.appendChild(createRow());
+    });
+
+    document.getElementById('device-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const rows = container.querySelectorAll('.device-row');
+      const devices = Array.from(rows).map(row => ({
+        label: row.querySelector('input[name="label"]').value,
+        ip: row.querySelector('input[name="ip"]').value,
+        username: row.querySelector('input[name="username"]').value,
+        password: row.querySelector('input[name="password"]').value,
+        interval: row.querySelector('select[name="interval"]').value,
+        paths: row.querySelector('textarea[name="paths"]').value
+          .split('\n')
+          .map(path => path.trim())
+          .filter(Boolean),
+      }));
+      await fetch('/devices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ devices }),
+      });
+      await fetchDevices();
+    });
+
+    if (!container.childElementCount) {
+      container.appendChild(createRow());
+    }
+    fetchDevices();
+  </script>
+</body>
+</html>
