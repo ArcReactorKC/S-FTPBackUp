@@ -52,7 +52,7 @@
     }
     .device-row {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1.2fr auto;
+      grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 0.8fr 1.2fr auto;
       gap: 1rem;
       margin-bottom: 1rem;
       align-items: end;
@@ -161,7 +161,7 @@
     <h1>PLCNext Backup Scheduler</h1>
     <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">Dark mode</button>
   </div>
-  <p>Enter a PLC device label, IP address, SFTP credentials, and backup interval. Use “Add device” to include multiple devices.</p>
+  <p>Enter a PLC device label, IP address, FTP/SFTP credentials, and backup interval. Use “Add device” to include multiple devices.</p>
 
   <form id="device-form">
     <div id="device-container"></div>
@@ -249,6 +249,32 @@
       return wrapper;
     }
 
+    function createProtocolField(value) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = 'Protocol *';
+      const select = document.createElement('select');
+      select.name = 'protocol';
+      select.required = true;
+
+      const protocolOptions = [
+        { value: 'sftp', label: 'SFTP (port 22)' },
+        { value: 'ftp', label: 'FTP (port 21)' },
+      ];
+
+      const selectedValue = value ? String(value).toLowerCase() : 'sftp';
+      protocolOptions.forEach(optionData => {
+        const option = document.createElement('option');
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        if (optionData.value === selectedValue) option.selected = true;
+        select.appendChild(option);
+      });
+
+      wrapper.append(label, select);
+      return wrapper;
+    }
+
     function createPathsField(value) {
       const wrapper = document.createElement('div');
       const label = document.createElement('label');
@@ -297,9 +323,10 @@
 
       row.appendChild(createInputField('Device label *', 'text', 'label', device.label));
       row.appendChild(createInputField('PLC IP address *', 'text', 'ip', device.ip));
-      row.appendChild(createInputField('SFTP username *', 'text', 'username', device.username));
-      row.appendChild(createInputField('SFTP password *', 'password', 'password', device.password));
+      row.appendChild(createInputField('Username *', 'text', 'username', device.username));
+      row.appendChild(createInputField('Password *', 'password', 'password', device.password));
       row.appendChild(createSelectField('Backup interval *', 'interval', device.interval));
+      row.appendChild(createProtocolField(device.protocol));
 
       // Paths textarea
       row.appendChild(createPathsField(device.paths));
@@ -356,6 +383,7 @@
         const ip = row.querySelector('input[name="ip"]').value.trim();
         const username = row.querySelector('input[name="username"]').value.trim();
         const password = row.querySelector('input[name="password"]').value;
+        const protocol = row.querySelector('select[name="protocol"]').value;
 
         if (!ip || !username || !password) {
           browseList.textContent = 'Enter IP/username/password first.';
@@ -375,6 +403,7 @@
               username,
               password,
               path: path,
+              protocol,
             }),
           });
 
@@ -387,6 +416,11 @@
           const isRoot = currentBrowsePath === '/' || currentBrowsePath === '';
           upButton.disabled = isRoot;
           selectCurrentButton.disabled = false;
+
+          if (payload.message) {
+            browseList.textContent = payload.message;
+            return;
+          }
 
           if (!payload.entries || !payload.entries.length) {
             browseList.textContent = 'No readable entries found in this folder.';
@@ -471,7 +505,9 @@
 
         const nextText = formatNextBackup(device.next_backup);
 
-        info.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval} | ${nextText}${pathsSummary}`;
+        const protocolLabel = (device.protocol || 'sftp').toUpperCase();
+
+        info.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval} — ${protocolLabel} | ${nextText}${pathsSummary}`;
 
         const actions = document.createElement('div');
 
@@ -529,16 +565,17 @@
     document.getElementById('device-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const rows = container.querySelectorAll('.device-row');
-      const devices = Array.from(rows).map(row => ({
-        label: row.querySelector('input[name="label"]').value,
-        ip: row.querySelector('input[name="ip"]').value,
-        username: row.querySelector('input[name="username"]').value,
-        password: row.querySelector('input[name="password"]').value,
-        interval: row.querySelector('select[name="interval"]').value,
-        paths: row.querySelector('textarea[name="paths"]').value
-          .split('\n')
-          .map(path => path.trim())
-          .filter(Boolean),
+        const devices = Array.from(rows).map(row => ({
+          label: row.querySelector('input[name="label"]').value,
+          ip: row.querySelector('input[name="ip"]').value,
+          username: row.querySelector('input[name="username"]').value,
+          password: row.querySelector('input[name="password"]').value,
+          interval: row.querySelector('select[name="interval"]').value,
+          protocol: row.querySelector('select[name="protocol"]').value,
+          paths: row.querySelector('textarea[name="paths"]').value
+            .split('\n')
+            .map(path => path.trim())
+            .filter(Boolean),
       }));
 
       await fetch('/devices', {

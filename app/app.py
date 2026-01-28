@@ -3,6 +3,7 @@ import os
 import shutil
 import stat
 import tempfile
+from ftplib import FTP, all_errors as ftp_errors
 from datetime import datetime
 from pathlib import Path
 
@@ -30,6 +31,7 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 DEVICE_DB = Path(os.getenv("DEVICE_DB", str(DATA_DIR / "devices.json")))
 BACKUP_OUTPUT_DIR = Path(os.getenv("BACKUP_OUTPUT_DIR", "/backups"))
 SFTP_PORT_DEFAULT = int(os.getenv("SFTP_PORT", "22"))
+FTP_PORT_DEFAULT = int(os.getenv("FTP_PORT", "21"))
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -66,6 +68,13 @@ def _open_sftp(ip_address: str, username: str, password: str, port: int):
     )
     sftp = ssh.open_sftp()
     return ssh, sftp
+
+
+def _open_ftp(ip_address: str, username: str, password: str, port: int) -> FTP:
+    ftp = FTP()
+    ftp.connect(host=ip_address, port=port, timeout=10)
+    ftp.login(user=username, passwd=password)
+    return ftp
 
 
 def sftp_download_tree(sftp, remote_dir: str, local_dir: Path):
@@ -111,12 +120,73 @@ def sftp_download_tree(sftp, remote_dir: str, local_dir: Path):
             print(f"[SFTP] Error on {remote_path}: {e}")
 
 
+def _ftp_entries(ftp: FTP, remote_dir: str):
+    try:
+        return [
+            {"name": name, "is_dir": facts.get("type") == "dir"}
+            for name, facts in ftp.mlsd(remote_dir)
+            if name not in (".", "..")
+        ]
+    except ftp_errors:
+        current = ftp.pwd()
+        entries = []
+        try:
+            ftp.cwd(remote_dir)
+            names = ftp.nlst()
+            for name in names:
+                name = Path(name).name
+                if name in (".", ".."):
+                    continue
+                is_dir = False
+                try:
+                    ftp.cwd(name)
+                    is_dir = True
+                except ftp_errors:
+                    is_dir = False
+                finally:
+                    ftp.cwd(remote_dir)
+                entries.append({"name": name, "is_dir": is_dir})
+        except ftp_errors as e:
+            print(f"[FTP] Cannot list dir {remote_dir}: {e}")
+        finally:
+            try:
+                ftp.cwd(current)
+            except ftp_errors:
+                pass
+        return entries
+
+
+def ftp_download_tree(ftp: FTP, remote_dir: str, local_dir: Path):
+    local_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        entries = _ftp_entries(ftp, remote_dir)
+    except ftp_errors as e:
+        print(f"[FTP] Missing or unreadable dir {remote_dir}: {e}")
+        return
+
+    for entry in entries:
+        name = entry["name"]
+        remote_path = f"{remote_dir.rstrip('/')}/{name}"
+        local_path = local_dir / name
+        if entry["is_dir"]:
+            ftp_download_tree(ftp, remote_path, local_path)
+        else:
+            try:
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                with local_path.open("wb") as handle:
+                    ftp.retrbinary(f"RETR {remote_path}", handle.write)
+            except ftp_errors as e:
+                print(f"[FTP] Read failed: {remote_path} ({e})")
+
+
 def create_backup(device: dict):
     label = device["label"]
     ip_address = device["ip"]
     username = device["username"]
     password = device["password"]
-    port = int(device.get("port") or SFTP_PORT_DEFAULT)
+    protocol = str(device.get("protocol") or "sftp").lower()
+    port_default = FTP_PORT_DEFAULT if protocol == "ftp" else SFTP_PORT_DEFAULT
+    port = int(device.get("port") or port_default)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     folder_name = f"{label}-{timestamp}"
@@ -125,20 +195,35 @@ def create_backup(device: dict):
         temp_path = Path(temp_dir) / folder_name
         temp_path.mkdir(parents=True, exist_ok=True)
 
-        ssh, sftp = _open_sftp(ip_address, username, password, port)
-        try:
-            directories = device.get("paths") or PLC_DIRECTORIES
-            for remote_dir in directories:
-                remote_dir = str(remote_dir).strip()
-                if not remote_dir:
-                    continue
-                target_dir = temp_path / remote_dir.strip("/")
-                sftp_download_tree(sftp, remote_dir, target_dir)
-        finally:
+        directories = device.get("paths") or PLC_DIRECTORIES
+        if protocol == "ftp":
+            ftp = _open_ftp(ip_address, username, password, port)
             try:
-                sftp.close()
+                for remote_dir in directories:
+                    remote_dir = str(remote_dir).strip()
+                    if not remote_dir:
+                        continue
+                    target_dir = temp_path / remote_dir.strip("/")
+                    ftp_download_tree(ftp, remote_dir, target_dir)
             finally:
-                ssh.close()
+                try:
+                    ftp.quit()
+                except ftp_errors:
+                    ftp.close()
+        else:
+            ssh, sftp = _open_sftp(ip_address, username, password, port)
+            try:
+                for remote_dir in directories:
+                    remote_dir = str(remote_dir).strip()
+                    if not remote_dir:
+                        continue
+                    target_dir = temp_path / remote_dir.strip("/")
+                    sftp_download_tree(sftp, remote_dir, target_dir)
+            finally:
+                try:
+                    sftp.close()
+                finally:
+                    ssh.close()
 
         base_name = str((BACKUP_OUTPUT_DIR / folder_name).with_suffix(""))
         shutil.make_archive(base_name, "zip", temp_path)
@@ -201,7 +286,9 @@ def devices():
         interval = str(device.get("interval", "")).strip()
         username = str(device.get("username", "")).strip()
         password = str(device.get("password", "")).strip()
-        port = int(device.get("port") or SFTP_PORT_DEFAULT)
+        protocol = str(device.get("protocol") or "sftp").lower()
+        port_default = FTP_PORT_DEFAULT if protocol == "ftp" else SFTP_PORT_DEFAULT
+        port = int(device.get("port") or port_default)
 
         if (
             not label
@@ -222,6 +309,7 @@ def devices():
                 "interval": interval,
                 "username": username,
                 "password": password,
+                "protocol": protocol,
                 "port": port,
                 "paths": cleaned_paths,
             }
@@ -259,27 +347,39 @@ def browse():
     username = str(payload.get("username", "")).strip()
     password = str(payload.get("password", "")).strip()
     path = str(payload.get("path", "")).strip() or "/opt/plcnext/projects"
-    port = int(payload.get("port") or SFTP_PORT_DEFAULT)
+    protocol = str(payload.get("protocol") or "sftp").lower()
+    port_default = FTP_PORT_DEFAULT if protocol == "ftp" else SFTP_PORT_DEFAULT
+    port = int(payload.get("port") or port_default)
 
     if not ip_address or not username or not password:
         return jsonify({"path": path, "entries": []})
 
     entries = []
     try:
-        ssh, sftp = _open_sftp(ip_address, username, password, port)
-        try:
-            for entry in sftp.listdir_attr(path):
-                name = entry.filename
-                if name in (".", ".."):
-                    continue
-                entries.append({"name": name, "is_dir": stat.S_ISDIR(entry.st_mode)})
-        finally:
+        if protocol == "ftp":
+            ftp = _open_ftp(ip_address, username, password, port)
             try:
-                sftp.close()
+                entries = _ftp_entries(ftp, path)
             finally:
-                ssh.close()
-    except (PermissionError, FileNotFoundError, OSError, paramiko.SSHException) as e:
-        print(f"[SFTP] Browse failed for {ip_address}:{port} {path}: {e}")
+                try:
+                    ftp.quit()
+                except ftp_errors:
+                    ftp.close()
+        else:
+            ssh, sftp = _open_sftp(ip_address, username, password, port)
+            try:
+                for entry in sftp.listdir_attr(path):
+                    name = entry.filename
+                    if name in (".", ".."):
+                        continue
+                    entries.append({"name": name, "is_dir": stat.S_ISDIR(entry.st_mode)})
+            finally:
+                try:
+                    sftp.close()
+                finally:
+                    ssh.close()
+    except (PermissionError, FileNotFoundError, OSError, paramiko.SSHException, ftp_errors) as e:
+        print(f"[BROWSE] {protocol.upper()} failed for {ip_address}:{port} {path}: {e}")
         entries = []
 
     # Sort: directories first, then files; alphabetically within each group
