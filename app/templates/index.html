@@ -101,6 +101,7 @@
         deviceCards.innerHTML = '<p>No devices configured.</p>';
         return;
       }
+ codex/create-docker-with-plc-backup-interface-8tvd1f
       devices.forEach((device, index) => {
         const card = document.createElement('div');
         card.className = 'device-card';
@@ -118,6 +119,12 @@
           await fetch(`/devices/${index}`, { method: 'DELETE' });
           await fetchDevices();
         });
+
+      devices.forEach(device => {
+        const card = document.createElement('div');
+        card.className = 'device-card';
+        card.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval}`;
+ main
         deviceCards.appendChild(card);
       });
     }

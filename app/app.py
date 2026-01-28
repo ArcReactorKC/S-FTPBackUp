@@ -156,6 +156,7 @@ def devices():
     return jsonify({"status": "saved", "count": len(cleaned_devices)})
 
 
+codex/create-docker-with-plc-backup-interface-8tvd1f
 @app.route("/devices/<int:device_index>", methods=["DELETE"])
 def delete_device(device_index):
     devices = load_devices()
@@ -176,6 +177,8 @@ def backup_device(device_index):
     return jsonify({"status": "backup_started"})
 
 
+
+ main
 if __name__ == "__main__":
     refresh_schedule()
     scheduler.start()
