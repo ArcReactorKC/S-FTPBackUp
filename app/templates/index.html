@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PLCNext Backup</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+    }
+    .device-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      align-items: end;
+    }
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 0.3rem;
+    }
+    input, select {
+      width: 100%;
+      padding: 0.4rem;
+    }
+    button {
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+    }
+    #device-list {
+      margin-top: 2rem;
+    }
+    .device-card {
+      padding: 0.8rem;
+      border: 1px solid #ccc;
+      margin-bottom: 0.6rem;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>PLCNext Backup Scheduler</h1>
+  <p>Enter a PLC device label, IP address, SFTP credentials, and backup interval. Use “Add device” to include multiple devices.</p>
+
+  <form id="device-form">
+    <div id="device-container"></div>
+    <button type="button" id="add-device">Add device</button>
+    <button type="submit">Save devices</button>
+  </form>
+
+  <div id="device-list">
+    <h2>Configured Devices</h2>
+    <div id="device-cards"></div>
+  </div>
+
+  <script>
+    const intervals = {{ intervals|tojson }};
+    const container = document.getElementById('device-container');
+    const addButton = document.getElementById('add-device');
+    const deviceCards = document.getElementById('device-cards');
+
+    function createInputField(labelText, type, name, value) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = labelText;
+      const input = document.createElement('input');
+      input.type = type;
+      input.name = name;
+      input.required = true;
+      input.value = value || '';
+      wrapper.append(label, input);
+      return wrapper;
+    }
+
+    function createSelectField(labelText, name, value) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = labelText;
+      const select = document.createElement('select');
+      select.name = name;
+      select.required = true;
+      intervals.forEach(interval => {
+        const option = document.createElement('option');
+        option.value = interval;
+        option.textContent = interval;
+        if (interval === value) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      });
+      wrapper.append(label, select);
+      return wrapper;
+    }
+
+    function createRow(device = {}) {
+      const row = document.createElement('div');
+      row.className = 'device-row';
+      row.appendChild(createInputField('Device label *', 'text', 'label', device.label));
+      row.appendChild(createInputField('PLC IP address *', 'text', 'ip', device.ip));
+      row.appendChild(createInputField('SFTP username *', 'text', 'username', device.username));
+      row.appendChild(createInputField('SFTP password *', 'password', 'password', device.password));
+      row.appendChild(createSelectField('Backup interval *', 'interval', device.interval));
+      const actions = document.createElement('div');
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'remove';
+      removeButton.textContent = 'Remove';
+      removeButton.addEventListener('click', () => row.remove());
+      actions.appendChild(removeButton);
+      row.appendChild(actions);
+      return row;
+    }
+
+    function renderDevices(devices) {
+      deviceCards.innerHTML = '';
+      if (!devices.length) {
+        deviceCards.innerHTML = '<p>No devices configured.</p>';
+        return;
+      }
+      devices.forEach((device, index) => {
+        const card = document.createElement('div');
+        card.className = 'device-card';
+        const info = document.createElement('div');
+        info.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval}`;
+        const actions = document.createElement('div');
+        const backupButton = document.createElement('button');
+        backupButton.type = 'button';
+        backupButton.textContent = 'Backup now';
+        backupButton.addEventListener('click', async () => {
+          await fetch(`/devices/${index}/backup`, { method: 'POST' });
+        });
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.textContent = 'Remove';
+        removeButton.addEventListener('click', async () => {
+          await fetch(`/devices/${index}`, { method: 'DELETE' });
+          await fetchDevices();
+        });
+        actions.append(backupButton, removeButton);
+        card.append(info, actions);
+        deviceCards.appendChild(card);
+      });
+    }
+
+    async function fetchDevices() {
+      const response = await fetch('/devices');
+      const devices = await response.json();
+      renderDevices(devices);
+      container.innerHTML = '';
+      if (devices.length) {
+        devices.forEach(device => container.appendChild(createRow(device)));
+      } else {
+        container.appendChild(createRow());
+      }
+    }
+
+    addButton.addEventListener('click', () => {
+      container.appendChild(createRow());
+    });
+
+    document.getElementById('device-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const rows = container.querySelectorAll('.device-row');
+      const devices = Array.from(rows).map(row => ({
+        label: row.querySelector('input[name="label"]').value,
+        ip: row.querySelector('input[name="ip"]').value,
+        username: row.querySelector('input[name="username"]').value,
+        password: row.querySelector('input[name="password"]').value,
+        interval: row.querySelector('select[name="interval"]').value,
+      }));
+      await fetch('/devices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ devices }),
+      });
+      await fetchDevices();
+    });
+
+    fetchDevices();
+  </script>
+</body>
+</html>
