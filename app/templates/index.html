@@ -5,9 +5,50 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PLCNext Backup</title>
   <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f8;
+      --text: #1a1a1a;
+      --muted: #555;
+      --surface: #ffffff;
+      --border: #d0d0d0;
+      --hover: #f2f2f2;
+      --button-bg: #1d6cf2;
+      --button-text: #ffffff;
+      --button-secondary-bg: #efefef;
+      --button-secondary-text: #1a1a1a;
+    }
+    [data-theme="dark"] {
+      --bg: #14161a;
+      --text: #f2f2f2;
+      --muted: #b8b8b8;
+      --surface: #1f2329;
+      --border: #3a3f47;
+      --hover: #2c3138;
+      --button-bg: #4c8dff;
+      --button-text: #0f1115;
+      --button-secondary-bg: #2c3138;
+      --button-secondary-text: #f2f2f2;
+    }
     body {
       font-family: Arial, sans-serif;
       margin: 2rem;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .theme-toggle {
+      border: 1px solid var(--border);
+      background: var(--button-secondary-bg);
+      color: var(--button-secondary-text);
+      border-radius: 999px;
+      font-weight: 600;
     }
     .device-row {
       display: grid;
@@ -25,19 +66,35 @@
       width: 100%;
       padding: 0.4rem;
       box-sizing: border-box;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 4px;
     }
     button {
       padding: 0.6rem 1rem;
       cursor: pointer;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      background: var(--button-bg);
+      color: var(--button-text);
+    }
+    button.remove,
+    button[type="button"]#add-device,
+    .browse-toolbar button {
+      background: var(--button-secondary-bg);
+      color: var(--button-secondary-text);
+      border-color: var(--border);
     }
     #device-list {
       margin-top: 2rem;
     }
     .device-card {
       padding: 0.8rem;
-      border: 1px solid #ccc;
+      border: 1px solid var(--border);
       margin-bottom: 0.6rem;
       border-radius: 4px;
+      background: var(--surface);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -60,20 +117,21 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       font-size: 0.85rem;
       padding: 0.35rem 0.5rem;
-      border: 1px solid #ccc;
+      border: 1px solid var(--border);
       border-radius: 4px;
-      background: #fafafa;
+      background: var(--surface);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       max-width: 420px;
     }
     .browse-list {
-      border: 1px solid #ccc;
+      border: 1px solid var(--border);
       padding: 0.4rem;
       max-height: 180px;
       overflow-y: auto;
       border-radius: 4px;
+      background: var(--surface);
     }
     .browse-item {
       padding: 0.2rem 0.3rem;
@@ -81,7 +139,7 @@
       user-select: none;
     }
     .browse-item:hover {
-      background: #f2f2f2;
+      background: var(--hover);
     }
     .browse-dir {
       font-weight: bold;
@@ -93,13 +151,16 @@
     }
     .hint {
       font-size: 0.85rem;
-      color: #555;
+      color: var(--muted);
       margin-top: 0.25rem;
     }
   </style>
 </head>
 <body>
-  <h1>PLCNext Backup Scheduler</h1>
+  <div class="page-header">
+    <h1>PLCNext Backup Scheduler</h1>
+    <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">Dark mode</button>
+  </div>
   <p>Enter a PLC device label, IP address, SFTP credentials, and backup interval. Use “Add device” to include multiple devices.</p>
 
   <form id="device-form">
@@ -115,6 +176,32 @@
 
   <script id="interval-data" type="application/json">{{ intervals|tojson }}</script>
   <script>
+    const themeToggle = document.getElementById('theme-toggle');
+    const themeStorageKey = 'plcnext-theme';
+
+    function getPreferredTheme() {
+      const stored = localStorage.getItem(themeStorageKey);
+      if (stored === 'light' || stored === 'dark') {
+        return stored;
+      }
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      const isDark = theme === 'dark';
+      themeToggle.textContent = isDark ? 'Light mode' : 'Dark mode';
+      themeToggle.setAttribute('aria-pressed', String(isDark));
+    }
+
+    applyTheme(getPreferredTheme());
+
+    themeToggle.addEventListener('click', () => {
+      const nextTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      localStorage.setItem(themeStorageKey, nextTheme);
+      applyTheme(nextTheme);
+    });
+
     const container = document.getElementById('device-container');
     const fallbackIntervals = ['1 hour', '1 day', '1 week', '1 month'];
     let intervals = fallbackIntervals;
