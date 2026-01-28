@@ -16,4 +16,4 @@ ENV DATA_DIR=/data \
     DEVICE_DB=/data/devices.json \
     BACKUP_OUTPUT_DIR=/backups
 
-CMD ["python", "/app/app.py"]
+CMD ["python", "/app/app/app.py"]
