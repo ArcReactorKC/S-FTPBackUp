@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PLCNext Backup</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+    }
+    .device-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      align-items: end;
+    }
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 0.3rem;
+    }
+    input, select {
+      width: 100%;
+      padding: 0.4rem;
+    }
+    button {
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+    }
+    #device-list {
+      margin-top: 2rem;
+    }
+    .device-card {
+      padding: 0.8rem;
+      border: 1px solid #ccc;
+      margin-bottom: 0.6rem;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>PLCNext Backup Scheduler</h1>
+  <p>Enter a PLC device label, IP address, SFTP credentials, and backup interval. Use “Add device” to include multiple devices.</p>
+
+  <form id="device-form">
+    <div id="device-container"></div>
+    <button type="button" id="add-device">Add device</button>
+    <button type="submit">Save devices</button>
+  </form>
+
+  <div id="device-list">
+    <h2>Configured Devices</h2>
+    <div id="device-cards"></div>
+  </div>
+
+  <script>
+    const intervals = {{ intervals|tojson }};
+    const container = document.getElementById('device-container');
+    const addButton = document.getElementById('add-device');
+    const deviceCards = document.getElementById('device-cards');
+
+    function createRow(device = {}) {
+      const row = document.createElement('div');
+      row.className = 'device-row';
+      row.innerHTML = `
+        <div>
+          <label>Device label *</label>
+          <input type="text" name="label" required value="${device.label || ''}" />
+        </div>
+        <div>
+          <label>PLC IP address *</label>
+          <input type="text" name="ip" required value="${device.ip || ''}" />
+        </div>
+        <div>
+          <label>SFTP username *</label>
+          <input type="text" name="username" required value="${device.username || ''}" />
+        </div>
+        <div>
+          <label>SFTP password *</label>
+          <input type="password" name="password" required value="${device.password || ''}" />
+        </div>
+        <div>
+          <label>Backup interval *</label>
+          <select name="interval" required>
+            ${intervals.map(interval => `<option value="${interval}" ${device.interval === interval ? 'selected' : ''}>${interval}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <button type="button" class="remove">Remove</button>
+        </div>
+      `;
+      row.querySelector('.remove').addEventListener('click', () => row.remove());
+      return row;
+    }
+
+    function renderDevices(devices) {
+      deviceCards.innerHTML = '';
+      if (!devices.length) {
+        deviceCards.innerHTML = '<p>No devices configured.</p>';
+        return;
+      }
+      devices.forEach(device => {
+        const card = document.createElement('div');
+        card.className = 'device-card';
+        card.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval}`;
+        deviceCards.appendChild(card);
+      });
+    }
+
+    async function fetchDevices() {
+      const response = await fetch('/devices');
+      const devices = await response.json();
+      renderDevices(devices);
+      container.innerHTML = '';
+      if (devices.length) {
+        devices.forEach(device => container.appendChild(createRow(device)));
+      } else {
+        container.appendChild(createRow());
+      }
+    }
+
+    addButton.addEventListener('click', () => {
+      container.appendChild(createRow());
+    });
+
+    document.getElementById('device-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const rows = container.querySelectorAll('.device-row');
+      const devices = Array.from(rows).map(row => ({
+        label: row.querySelector('input[name="label"]').value,
+        ip: row.querySelector('input[name="ip"]').value,
+        username: row.querySelector('input[name="username"]').value,
+        password: row.querySelector('input[name="password"]').value,
+        interval: row.querySelector('select[name="interval"]').value,
+      }));
+      await fetch('/devices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ devices }),
+      });
+      await fetchDevices();
+    });
+
+    fetchDevices();
+  </script>
+</body>
+</html>
