@@ -103,45 +103,6 @@
       gap: 1rem;
       flex-wrap: wrap;
     }
-    .device-actions {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-    }
-    .status-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      padding: 0.25rem 0.5rem;
-      border-radius: 999px;
-      font-size: 0.8rem;
-      border: 1px solid var(--border);
-      background: var(--button-secondary-bg);
-      color: var(--button-secondary-text);
-    }
-    .status-dot {
-      width: 0.5rem;
-      height: 0.5rem;
-      border-radius: 999px;
-      background: #8a8a8a;
-    }
-    .status-dot.running {
-      background: #f5a623;
-    }
-    .status-dot.success {
-      background: #3cb371;
-    }
-    .status-dot.error {
-      background: #e05a5a;
-    }
-    .edit-banner {
-      margin-top: 1rem;
-      padding: 0.6rem 0.8rem;
-      border-radius: 6px;
-      border: 1px dashed var(--border);
-      background: var(--surface);
-    }
 
     .browse-panel {
       display: grid;
@@ -207,10 +168,8 @@
   <form id="device-form">
     <div id="device-container"></div>
     <button type="button" id="add-device">Add device</button>
-    <button type="button" id="cancel-edit" hidden>Cancel settings</button>
     <button type="submit">Save devices</button>
   </form>
-  <div id="edit-banner" class="edit-banner" hidden>Editing device settings. Save to apply changes.</div>
 
   <div id="device-list">
     <h2>Configured Devices</h2>
@@ -260,10 +219,6 @@
 
     const addButton = document.getElementById('add-device');
     const deviceCards = document.getElementById('device-cards');
-    const cancelEditButton = document.getElementById('cancel-edit');
-    const editBanner = document.getElementById('edit-banner');
-    let cachedDevices = [];
-    let editingIndex = null;
 
     function createInputField(labelText, type, name, value, required=true) {
       const wrapper = document.createElement('div');
@@ -362,20 +317,6 @@
       const d = new Date(isoString);
       if (isNaN(d.getTime())) return 'Next: (unknown)';
       return `Next: ${d.toLocaleString()}`;
-    }
-
-    function formatStatus(status) {
-      if (!status || !status.state) {
-        return { text: 'Idle', variant: 'idle' };
-      }
-      const state = status.state;
-      const detail = status.detail ? ` • ${status.detail}` : '';
-      if (state === 'completed') return { text: `Completed${detail}`, variant: 'success' };
-      if (state === 'failed') return { text: `Failed${detail}`, variant: 'error' };
-      if (state === 'archiving' || state === 'downloading' || state === 'connecting' || state === 'starting') {
-        return { text: `${state.charAt(0).toUpperCase() + state.slice(1)}${detail}`, variant: 'running' };
-      }
-      return { text: `${state.charAt(0).toUpperCase() + state.slice(1)}${detail}`, variant: 'running' };
     }
 
     function createRow(device = {}) {
@@ -571,32 +512,14 @@
         info.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval} — ${protocolLabel} | ${nextText}${pathsSummary}`;
 
         const actions = document.createElement('div');
-        actions.className = 'device-actions';
 
         const backupButton = document.createElement('button');
         backupButton.type = 'button';
         backupButton.textContent = 'Backup now';
         backupButton.addEventListener('click', async () => {
           await fetch(`/devices/${index}/backup`, { method: 'POST' });
+          // Refresh list so next run time stays accurate (optional but nice)
           await fetchDevices();
-        });
-
-        const statusInfo = formatStatus(device.backup_status);
-        const statusPill = document.createElement('div');
-        statusPill.className = 'status-pill';
-        const statusDot = document.createElement('span');
-        statusDot.className = `status-dot ${statusInfo.variant}`;
-        const statusText = document.createElement('span');
-        statusText.textContent = statusInfo.text;
-        statusPill.append(statusDot, statusText);
-
-        const settingsButton = document.createElement('button');
-        settingsButton.type = 'button';
-        settingsButton.textContent = 'Settings';
-        settingsButton.addEventListener('click', () => {
-          editingIndex = index;
-          renderForm();
-          window.scrollTo({ top: 0, behavior: 'smooth' });
         });
 
         const removeButton = document.createElement('button');
@@ -604,38 +527,16 @@
         removeButton.textContent = 'Remove';
         removeButton.addEventListener('click', async () => {
           await fetch(`/devices/${index}`, { method: 'DELETE' });
-          if (editingIndex === index) {
-            editingIndex = null;
-          }
           await fetchDevices();
         });
 
-        actions.append(backupButton, statusPill, settingsButton, removeButton);
+        actions.append(backupButton, removeButton);
         card.append(info, actions);
         deviceCards.appendChild(card);
       });
     }
 
-    function renderForm() {
-      container.innerHTML = '';
-      if (editingIndex !== null && cachedDevices[editingIndex]) {
-        container.appendChild(createRow(cachedDevices[editingIndex]));
-        addButton.disabled = true;
-        cancelEditButton.hidden = false;
-        editBanner.hidden = false;
-        return;
-      }
-
-      addButton.disabled = false;
-      cancelEditButton.hidden = true;
-      editBanner.hidden = true;
-
-      if (container.childElementCount === 0) {
-        container.appendChild(createRow());
-      }
-    }
-
-    async function fetchDevices(options = {}) {
+    async function fetchDevices() {
       try {
         const response = await fetch('/devices');
         if (!response.ok) {
@@ -643,18 +544,18 @@
         }
         const devices = await response.json();
 
-        cachedDevices = devices;
-        if (editingIndex !== null && !cachedDevices[editingIndex]) {
-          editingIndex = null;
-        }
         renderDevices(devices);
-        if (!options.preserveForm) {
-          renderForm();
+
+        container.innerHTML = '';
+        if (devices.length) {
+          devices.forEach(device => container.appendChild(createRow(device)));
+        } else {
+          container.appendChild(createRow());
         }
       } catch (error) {
         console.error(error);
-        if (!options.preserveForm) {
-          renderForm();
+        if (!container.childElementCount) {
+          container.appendChild(createRow());
         }
       }
     }
@@ -663,15 +564,10 @@
       container.appendChild(createRow());
     });
 
-    cancelEditButton.addEventListener('click', () => {
-      editingIndex = null;
-      renderForm();
-    });
-
     document.getElementById('device-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const rows = container.querySelectorAll('.device-row');
-      const rowDevices = Array.from(rows).map(row => ({
+        const devices = Array.from(rows).map(row => ({
           label: row.querySelector('input[name="label"]').value,
           ip: row.querySelector('input[name="ip"]').value,
           username: row.querySelector('input[name="username"]').value,
@@ -684,19 +580,10 @@
             .filter(Boolean),
       }));
 
-      let devicesToSave = [...cachedDevices];
-      if (editingIndex !== null && devicesToSave[editingIndex]) {
-        devicesToSave[editingIndex] = rowDevices[0];
-      } else {
-        devicesToSave = devicesToSave.concat(rowDevices);
-      }
-
-      editingIndex = null;
-
       await fetch('/devices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ devices: devicesToSave }),
+        body: JSON.stringify({ devices }),
       });
 
       await fetchDevices();
@@ -706,7 +593,6 @@
       container.appendChild(createRow());
     }
     fetchDevices();
-    setInterval(() => fetchDevices({ preserveForm: true }), 10000);
   </script>
 </body>
 </html>
