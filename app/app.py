@@ -3,9 +3,11 @@ import os
 import shutil
 import stat
 import tempfile
+import threading
 from ftplib import FTP, all_errors as ftp_errors
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import paramiko
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -38,6 +40,8 @@ BACKUP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
 scheduler = BackgroundScheduler()
+backup_status_lock = threading.Lock()
+backup_status = {}
 
 
 def load_devices():
@@ -179,7 +183,26 @@ def ftp_download_tree(ftp: FTP, remote_dir: str, local_dir: Path):
                 print(f"[FTP] Read failed: {remote_path} ({e})")
 
 
-def create_backup(device: dict):
+def _device_key(device: dict) -> str:
+    return _job_id_for_device(device)
+
+
+def set_backup_status(device: dict, state: str, detail: Optional[str] = None):
+    entry = {
+        "state": state,
+        "detail": detail or "",
+        "updated_at": datetime.now().isoformat(),
+    }
+    with backup_status_lock:
+        backup_status[_device_key(device)] = entry
+
+
+def get_backup_status(device: dict):
+    with backup_status_lock:
+        return backup_status.get(_device_key(device))
+
+
+def create_backup(device: dict, status_callback=None):
     label = device["label"]
     ip_address = device["ip"]
     username = device["username"]
@@ -187,6 +210,9 @@ def create_backup(device: dict):
     protocol = str(device.get("protocol") or "sftp").lower()
     port_default = FTP_PORT_DEFAULT if protocol == "ftp" else SFTP_PORT_DEFAULT
     port = int(device.get("port") or port_default)
+
+    if status_callback:
+        status_callback(device, "connecting", f"{protocol.upper()} session")
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     folder_name = f"{label}-{timestamp}"
@@ -196,6 +222,8 @@ def create_backup(device: dict):
         temp_path.mkdir(parents=True, exist_ok=True)
 
         directories = device.get("paths") or PLC_DIRECTORIES
+        if status_callback:
+            status_callback(device, "downloading", f"{len(directories)} paths")
         if protocol == "ftp":
             ftp = _open_ftp(ip_address, username, password, port)
             try:
@@ -225,6 +253,9 @@ def create_backup(device: dict):
                 finally:
                     ssh.close()
 
+        if status_callback:
+            status_callback(device, "archiving", "Creating zip archive")
+
         base_name = str((BACKUP_OUTPUT_DIR / folder_name).with_suffix(""))
         shutil.make_archive(base_name, "zip", temp_path)
 
@@ -234,12 +265,57 @@ def _job_id_for_device(device: dict) -> str:
     return f"backup-{device['label']}-{device['ip']}"
 
 
+def _get_job_next_run_time(job):
+    if not job:
+        return None
+    try:
+        return getattr(job, "next_run_time", None)
+    except Exception:
+        return None
+
+
 def get_next_run_time_for_device(device: dict):
     job = scheduler.get_job(_job_id_for_device(device))
-    if not job or not job.next_run_time:
+    next_run_time = _get_job_next_run_time(job)
+    if not next_run_time:
         return None
     # ISO format is easy for the browser to parse & display
-    return job.next_run_time.isoformat()
+    return next_run_time.isoformat()
+
+
+def _parse_iso_datetime(value: Optional[str]):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _update_saved_next_run_time(device: dict):
+    next_run = get_next_run_time_for_device(device)
+    devices_list = load_devices()
+    target_key = _device_key(device)
+    updated = False
+    for saved in devices_list:
+        if _device_key(saved) == target_key:
+            saved["next_run_at"] = next_run
+            updated = True
+            break
+    if updated:
+        save_devices(devices_list)
+
+
+def run_backup_and_record(device: dict):
+    set_backup_status(device, "starting", "Preparing backup")
+    try:
+        create_backup(device, status_callback=set_backup_status)
+        set_backup_status(device, "completed", "Backup complete")
+    except Exception as exc:
+        set_backup_status(device, "failed", str(exc))
+        raise
+    finally:
+        _update_saved_next_run_time(device)
 
 
 def schedule_device(device: dict):
@@ -247,20 +323,28 @@ def schedule_device(device: dict):
     seconds = INTERVAL_SECONDS.get(interval)
     if not seconds:
         return
+    start_date = _parse_iso_datetime(device.get("next_run_at"))
+    if start_date and start_date <= datetime.now():
+        start_date = None
 
-    scheduler.add_job(
-        create_backup,
-        trigger=IntervalTrigger(seconds=seconds),
+    job = scheduler.add_job(
+        run_backup_and_record,
+        trigger=IntervalTrigger(seconds=seconds, start_date=start_date),
         args=[device],
         id=_job_id_for_device(device),
         replace_existing=True,
     )
+    next_run_time = _get_job_next_run_time(job)
+    if next_run_time:
+        device["next_run_at"] = next_run_time.isoformat()
 
 
 def refresh_schedule():
     scheduler.remove_all_jobs()
-    for device in load_devices():
+    devices_list = load_devices()
+    for device in devices_list:
         schedule_device(device)
+    save_devices(devices_list)
 
 
 @app.route("/")
@@ -273,12 +357,16 @@ def devices():
     if request.method == "GET":
         devices_list = load_devices()
         for d in devices_list:
-            d["next_backup"] = get_next_run_time_for_device(d)
+            d["next_backup"] = get_next_run_time_for_device(d) or d.get("next_run_at")
+            d["backup_status"] = get_backup_status(d)
         return jsonify(devices_list)
 
     payload = request.get_json(silent=True) or {}
     devices_payload = payload.get("devices", [])
     cleaned_devices = []
+    existing_devices = {
+        _device_key(device): device for device in load_devices()
+    }
 
     for device in devices_payload:
         label = str(device.get("label", "")).strip()
@@ -302,18 +390,22 @@ def devices():
         paths = device.get("paths") or []
         cleaned_paths = [str(path).strip() for path in paths if str(path).strip()]
 
-        cleaned_devices.append(
-            {
-                "label": label,
-                "ip": ip_address,
-                "interval": interval,
-                "username": username,
-                "password": password,
-                "protocol": protocol,
-                "port": port,
-                "paths": cleaned_paths,
-            }
-        )
+        cleaned_device = {
+            "label": label,
+            "ip": ip_address,
+            "interval": interval,
+            "username": username,
+            "password": password,
+            "protocol": protocol,
+            "port": port,
+            "paths": cleaned_paths,
+        }
+
+        existing = existing_devices.get(_device_key(cleaned_device))
+        if existing and existing.get("interval") == interval:
+            cleaned_device["next_run_at"] = existing.get("next_run_at")
+
+        cleaned_devices.append(cleaned_device)
 
     save_devices(cleaned_devices)
     refresh_schedule()
@@ -336,7 +428,10 @@ def backup_device(device_index: int):
     devices_list = load_devices()
     if device_index < 0 or device_index >= len(devices_list):
         return jsonify({"error": "Device not found"}), 404
-    create_backup(devices_list[device_index])
+    device = devices_list[device_index]
+    set_backup_status(device, "queued", "Backup queued")
+    thread = threading.Thread(target=run_backup_and_record, args=(device,), daemon=True)
+    thread.start()
     return jsonify({"status": "backup_started"})
 
 
