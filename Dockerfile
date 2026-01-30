@@ -16,4 +16,4 @@ ENV DATA_DIR=/data \
     DEVICE_DB=/data/devices.json \
     BACKUP_OUTPUT_DIR=/backups
 
-CMD ["python", "/app/app/app.py"]
+CMD ["gunicorn", "-w", "2", "-k", "gthread", "--threads", "4", "-b", "0.0.0.0:5000", "--access-logfile", "-", "--error-logfile", "-", "--chdir", "/app/app", "app:app"]
