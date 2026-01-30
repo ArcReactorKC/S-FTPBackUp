@@ -5,7 +5,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PLCNext Backup</title>
+  <title>S-FTP Backup</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -346,7 +346,7 @@
       const textarea = document.createElement('textarea');
       textarea.name = 'paths';
       textarea.rows = 6;
-      textarea.placeholder = '/opt/plcnext/projects/MyProject\n/opt/plcnext/projects/AnotherProject';
+      textarea.placeholder = '/folder/file.md';
       textarea.value = Array.isArray(value) ? value.join('\n') : (value || '');
       wrapper.append(label, textarea);
 
@@ -400,7 +400,7 @@
       row.className = 'device-row';
 
       row.appendChild(createInputField('Device label *', 'text', 'label', device.label));
-      row.appendChild(createInputField('PLC IP address *', 'text', 'ip', device.ip));
+      row.appendChild(createInputField('Device IP address *', 'text', 'ip', device.ip));
       row.appendChild(createInputField('Username *', 'text', 'username', device.username));
       row.appendChild(createInputField('Password *', 'password', 'password', device.password));
       row.appendChild(createSelectField('Backup interval *', 'interval', device.interval));
