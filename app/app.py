@@ -5,7 +5,7 @@ import stat
 import tempfile
 import threading
 from ftplib import FTP, all_errors as ftp_errors
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -338,8 +338,12 @@ def schedule_device(device: dict):
     if not seconds:
         return
     start_date = _parse_iso_datetime(device.get("next_run_at"))
-    if start_date and start_date <= datetime.now():
-        start_date = None
+    if start_date:
+        now = datetime.now(tz=start_date.tzinfo) if start_date.tzinfo else datetime.now()
+        if start_date <= now:
+            start_date = None
+        elif start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=timezone.utc)
 
     job = scheduler.add_job(
         run_backup_and_record,
