@@ -1,13 +1,26 @@
+import fcntl
 import json
 import os
 import shutil
 import stat
 import tempfile
 import threading
+import warnings
+from datetime import datetime, timezone
 from ftplib import FTP, all_errors as ftp_errors
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from cryptography.utils import CryptographyDeprecationWarning
+
+warnings.filterwarnings(
+    "ignore",
+    message=(
+        r".*TripleDES has been moved to cryptography\.hazmat\.decrepit\.ciphers\.algorithms\.TripleDES.*"
+    ),
+    category=CryptographyDeprecationWarning,
+)
 
 import paramiko
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -29,6 +42,7 @@ DEVICE_DB = Path(os.getenv("DEVICE_DB", str(DATA_DIR / "devices.json")))
 BACKUP_OUTPUT_DIR = Path(os.getenv("BACKUP_OUTPUT_DIR", "/backups"))
 SFTP_PORT_DEFAULT = int(os.getenv("SFTP_PORT", "22"))
 FTP_PORT_DEFAULT = int(os.getenv("FTP_PORT", "21"))
+DEFAULT_MAX_BACKUPS = 10
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -38,6 +52,8 @@ app.static_folder = "static"
 scheduler = BackgroundScheduler()
 backup_status_lock = threading.Lock()
 backup_status = {}
+_scheduler_lock_handle = None
+_scheduler_started = False
 
 
 def load_devices():
@@ -255,6 +271,23 @@ def create_backup(device: dict, status_callback=None):
         base_name = str((BACKUP_OUTPUT_DIR / folder_name).with_suffix(""))
         shutil.make_archive(base_name, "zip", temp_path)
 
+    max_backups = int(device.get("max_backups") or DEFAULT_MAX_BACKUPS)
+    prune_old_backups(device["label"], max_backups)
+
+
+def prune_old_backups(label: str, max_backups: int):
+    safe_max = max(1, min(int(max_backups), 100))
+    backups = sorted(
+        BACKUP_OUTPUT_DIR.glob(f"{label}-*.zip"),
+        key=lambda path: path.stat().st_mtime,
+    )
+    while len(backups) > safe_max:
+        oldest = backups.pop(0)
+        try:
+            oldest.unlink()
+        except FileNotFoundError:
+            continue
+
 
 def _job_id_for_device(device: dict) -> str:
     # Keep this stable; it’s how we look up next_run_time
@@ -320,8 +353,12 @@ def schedule_device(device: dict):
     if not seconds:
         return
     start_date = _parse_iso_datetime(device.get("next_run_at"))
-    if start_date and start_date <= datetime.now():
-        start_date = None
+    if start_date:
+        now = datetime.now(tz=start_date.tzinfo) if start_date.tzinfo else datetime.now()
+        if start_date <= now:
+            start_date = None
+        elif start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=timezone.utc)
 
     job = scheduler.add_job(
         run_backup_and_record,
@@ -341,6 +378,29 @@ def refresh_schedule():
     for device in devices_list:
         schedule_device(device)
     save_devices(devices_list)
+
+
+def start_scheduler():
+    global _scheduler_lock_handle, _scheduler_started
+    if _scheduler_started:
+        return
+    lock_path = DATA_DIR / "scheduler.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock_file.close()
+        return
+    _scheduler_lock_handle = lock_file
+    refresh_schedule()
+    scheduler.start()
+    _scheduler_started = True
+
+
+@app.before_request
+def _start_scheduler_once():
+    start_scheduler()
 
 
 @app.route("/")
@@ -373,6 +433,12 @@ def devices():
         protocol = str(device.get("protocol") or "sftp").lower()
         port_default = FTP_PORT_DEFAULT if protocol == "ftp" else SFTP_PORT_DEFAULT
         port = int(device.get("port") or port_default)
+        max_backups_raw = device.get("max_backups")
+        try:
+            max_backups = int(max_backups_raw) if max_backups_raw is not None else DEFAULT_MAX_BACKUPS
+        except (TypeError, ValueError):
+            max_backups = DEFAULT_MAX_BACKUPS
+        max_backups = max(1, min(max_backups, 100))
 
         if (
             not label
@@ -395,6 +461,7 @@ def devices():
             "protocol": protocol,
             "port": port,
             "paths": cleaned_paths,
+            "max_backups": max_backups,
         }
 
         existing = existing_devices.get(_device_key(cleaned_device))
@@ -479,6 +546,5 @@ def browse():
 
 
 if __name__ == "__main__":
-    refresh_schedule()
-    scheduler.start()
+    start_scheduler()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))

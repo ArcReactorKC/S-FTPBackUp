@@ -66,9 +66,30 @@
       border-radius: 999px;
       font-weight: 600;
     }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .support-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.5rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--button-secondary-bg);
+      color: var(--button-secondary-text);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .support-link:hover {
+      background: var(--hover);
+    }
     .device-row {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 0.8fr 1.2fr auto;
+      grid-template-columns: 1fr 1fr 1fr 1fr 1fr 0.8fr 1fr 0.8fr 1.2fr auto;
       gap: 1rem;
       margin-bottom: 1rem;
       align-items: end;
@@ -217,7 +238,12 @@
       <img class="brand-icon" src="/static/icon.png" alt="S/FTP Backup icon" onerror="this.style.display='none'" />
       <h1>S/FTP Backup Scheduler</h1>
     </div>
-    <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">Dark mode</button>
+    <div class="header-actions">
+      <a class="support-link" href="https://buymeacoffee.com/arcreactorkc" target="_blank" rel="noopener noreferrer">
+        Buy me a coffee
+      </a>
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">Dark mode</button>
+    </div>
   </div>
   <p>Enter a device label, IP address, FTP/SFTP credentials, and backup interval. Use “Add device” to include multiple devices.</p>
 
@@ -313,6 +339,21 @@
       return wrapper;
     }
 
+    function createMaxBackupsField(value) {
+      const wrapper = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = 'Max backups kept *';
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.name = 'max_backups';
+      input.required = true;
+      input.min = '1';
+      input.max = '100';
+      input.value = value || '10';
+      wrapper.append(label, input);
+      return wrapper;
+    }
+
     function createProtocolField(value) {
       const wrapper = document.createElement('div');
       const label = document.createElement('label');
@@ -404,6 +445,7 @@
       row.appendChild(createInputField('Username *', 'text', 'username', device.username));
       row.appendChild(createInputField('Password *', 'password', 'password', device.password));
       row.appendChild(createSelectField('Backup interval *', 'interval', device.interval));
+      row.appendChild(createMaxBackupsField(device.max_backups));
       row.appendChild(createProtocolField(device.protocol));
 
       // Paths textarea
@@ -580,12 +622,13 @@
         const pathsSummary = (device.paths && device.paths.length)
           ? ` | Paths: ${device.paths.length}`
           : ' | Paths: default';
+        const maxBackupsSummary = ` | Keep: ${device.max_backups || 10}`;
 
         const nextText = formatNextBackup(device.next_backup);
 
         const protocolLabel = (device.protocol || 'sftp').toUpperCase();
 
-        info.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval} — ${protocolLabel} | ${nextText}${pathsSummary}`;
+        info.textContent = `${device.label} (${device.ip}) — ${device.username} — ${device.interval} — ${protocolLabel} | ${nextText}${pathsSummary}${maxBackupsSummary}`;
 
         const actions = document.createElement('div');
         actions.className = 'device-actions';
@@ -694,6 +737,7 @@
           username: row.querySelector('input[name="username"]').value,
           password: row.querySelector('input[name="password"]').value,
           interval: row.querySelector('select[name="interval"]').value,
+          max_backups: row.querySelector('input[name="max_backups"]').value,
           protocol: row.querySelector('select[name="protocol"]').value,
           paths: row.querySelector('textarea[name="paths"]').value
             .split('\n')
