@@ -66,6 +66,27 @@
       border-radius: 999px;
       font-weight: 600;
     }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .support-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.5rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--button-secondary-bg);
+      color: var(--button-secondary-text);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .support-link:hover {
+      background: var(--hover);
+    }
     .device-row {
       display: grid;
       grid-template-columns: 1fr 1fr 1fr 1fr 1fr 0.8fr 1fr 0.8fr 1.2fr auto;
@@ -217,7 +238,12 @@
       <img class="brand-icon" src="/static/icon.png" alt="S/FTP Backup icon" onerror="this.style.display='none'" />
       <h1>S/FTP Backup Scheduler</h1>
     </div>
-    <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">Dark mode</button>
+    <div class="header-actions">
+      <a class="support-link" href="https://buymeacoffee.com/arcreactorkc" target="_blank" rel="noopener noreferrer">
+        Buy me a coffee
+      </a>
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">Dark mode</button>
+    </div>
   </div>
   <p>Enter a device label, IP address, FTP/SFTP credentials, and backup interval. Use “Add device” to include multiple devices.</p>
 
