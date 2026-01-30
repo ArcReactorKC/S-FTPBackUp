@@ -2,7 +2,7 @@ name: Build and Publish Docker Image (GHCR)
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "next"]
   workflow_dispatch:
 
 permissions:
@@ -41,7 +41,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
 
       - name: Build and push
